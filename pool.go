@@ -18,13 +18,14 @@ type NewFunc func() (interface{}, error)
 //protection
 type Pool struct {
 	New          NewFunc
-	Max, created uint
+	max, created uint
 
 	is    []interface{}
 	await []chan interface{}
 
-	get chan (chan interface{})
-	put chan (interface{})
+	newMax chan uint
+	get    chan (chan interface{})
+	put    chan (interface{})
 }
 
 //NewPool takes a creator function and
@@ -34,8 +35,9 @@ func NewPool(nf NewFunc) *Pool {
 		is:    make([]interface{}, 0, 1),
 		await: make([]chan interface{}, 0, 1),
 
-		get: make(chan (chan interface{})),
-		put: make(chan interface{}),
+		newMax: make(chan uint),
+		get:    make(chan (chan interface{})),
+		put:    make(chan interface{}),
 	}
 
 	go p.run()
@@ -57,9 +59,15 @@ func (p *Pool) Put(i interface{}) {
 	p.put <- i
 }
 
+func (p *Pool) SetMax(max uint) {
+	p.newMax <- max
+}
+
 func (p *Pool) run() {
 	for {
 		select {
+		case newMax := <-p.newMax:
+			p.max = newMax
 		case getCh := <-p.get:
 			if len(p.is) > 0 {
 				last := len(p.is) - 1
@@ -69,7 +77,7 @@ func (p *Pool) run() {
 				p.is = p.is[:last]
 
 				getCh <- v
-			} else if p.New != nil && (p.Max == 0 || p.created < p.Max) {
+			} else if p.New != nil && (p.max == 0 || p.created < p.max) {
 
 				//Try to get a new one
 				if v, err := p.New(); err == nil {
