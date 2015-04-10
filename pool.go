@@ -1,3 +1,4 @@
+//Package pool implements synchronous access to a shared set of resources.
 package pool
 
 import "fmt"
@@ -12,10 +13,12 @@ var LimitReached error = fmt.Errorf("limit reached")
 type NewFunc func() (interface{}, error)
 
 //The Pool is the default/reference implementation of the pooler interface. It
-//is safe for concurrent use.
+//is safe for concurrent use. The New() function will never be called
+//concurrently and so may access variables without worrying about concurrency
+//protection
 type Pool struct {
-	New NewFunc
-	Max uint
+	New          NewFunc
+	Max, created uint
 
 	is    []interface{}
 	await []chan interface{}
@@ -24,6 +27,7 @@ type Pool struct {
 	put chan (interface{})
 }
 
+//NewPool takes a creator function and
 func NewPool(nf NewFunc) *Pool {
 	p := Pool{
 		New:   nf,
@@ -65,12 +69,17 @@ func (p *Pool) run() {
 				p.is = p.is[:last]
 
 				getCh <- v
-			} else if p.New != nil {
+			} else if p.New != nil && (p.Max == 0 || p.created < p.Max) {
+
 				//Try to get a new one
-				if v, err := p.New(); err != nil {
-					p.await = append(p.await, getCh)
-				} else {
+				if v, err := p.New(); err == nil {
+					p.created++
+
+					//success
 					getCh <- v
+				} else {
+					//error = wait
+					p.await = append(p.await, getCh)
 				}
 			} else {
 				p.await = append(p.await, getCh)
