@@ -70,6 +70,7 @@ func (p *Pool) run() {
 			p.max = newMax
 		case getCh := <-p.get:
 			if len(p.is) > 0 {
+				//if pool values are waiting
 				last := len(p.is) - 1
 
 				//Pop
@@ -77,14 +78,15 @@ func (p *Pool) run() {
 				p.is = p.is[:last]
 
 				getCh <- v
-			} else if p.New != nil && (p.max == 0 || p.created < p.max) {
-
+				close(getCh)
+			} else if p.New != nil && (p.max == 0 || p.created <= p.max) {
 				//Try to get a new one
 				if v, err := p.New(); err == nil {
 					p.created++
 
 					//success
 					getCh <- v
+					close(getCh)
 				} else {
 					//error = wait
 					p.await = append(p.await, getCh)
@@ -95,8 +97,10 @@ func (p *Pool) run() {
 		case v := <-p.put:
 			if len(p.await) > 0 {
 				getCh := p.await[0]
-				p.await = p.await[:1]
+				p.await = p.await[1:]
+
 				getCh <- v
+				close(getCh)
 			} else {
 				p.is = append(p.is, v)
 			}
