@@ -79,7 +79,7 @@ func (p *Pool) run() {
 
 				getCh <- v
 				close(getCh)
-			} else if p.New != nil && (p.max == 0 || p.created <= p.max) {
+			} else if p.New != nil && (p.max == 0 || p.created < p.max) {
 				//Try to get a new one
 				if v, err := p.New(); err == nil {
 					p.created++
