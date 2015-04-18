@@ -4,7 +4,10 @@
 
 package pool
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 type Pooler interface {
 	Get() interface{}
@@ -12,6 +15,7 @@ type Pooler interface {
 }
 
 var LimitReached error = fmt.Errorf("limit reached")
+var Timeout = fmt.Errorf("timeout")
 
 type NewFunc func() (interface{}, error)
 
@@ -20,15 +24,15 @@ type NewFunc func() (interface{}, error)
 //concurrently and so may access variables without worrying about concurrency
 //protection
 type Pool struct {
-	New          NewFunc
-	max, created uint
+	New NewFunc
 
 	is      []interface{}
-	waiting []chan interface{}
+	waiting []chan res
 
-	newMax chan uint
-	get    chan (chan interface{})
-	put    chan (interface{})
+	newTimeout chan time.Duration
+	newMax     chan uint
+	get        chan (chan res)
+	put        chan (interface{})
 }
 
 //NewPool takes a creator function and
@@ -36,11 +40,12 @@ func NewPool(nf NewFunc) *Pool {
 	p := Pool{
 		New:     nf,
 		is:      make([]interface{}, 0, 1),
-		waiting: make([]chan interface{}, 0, 1),
+		waiting: make([]chan res, 0, 1),
 
-		newMax: make(chan uint),
-		get:    make(chan (chan interface{})),
-		put:    make(chan interface{}),
+		newTimeout: make(chan time.Duration),
+		newMax:     make(chan uint),
+		get:        make(chan (chan res)),
+		put:        make(chan interface{}),
 	}
 
 	go p.run()
@@ -48,14 +53,25 @@ func NewPool(nf NewFunc) *Pool {
 	return &p
 }
 
+type res struct {
+	item interface{}
+	err  error
+}
+
 //Get will return an interface from the pool, or attempt to create a new one if
 //it cannot get one. If the New() function is nil or returns an error, it will
 //wait for an interface{} to become available via Put(). These will be
 //processed with FIFO semantics.
-func (p *Pool) Get() interface{} {
-	ch := make(chan interface{})
+func (p *Pool) Get() (interface{}, error) {
+	ch := make(chan res)
 	p.get <- ch
-	return <-ch
+
+	r := <-ch
+	if r.err != nil {
+		return nil, r.err
+	} else {
+		return r.item, nil
+	}
 }
 
 func (p *Pool) Put(i interface{}) {
@@ -66,11 +82,29 @@ func (p *Pool) SetMax(max uint) {
 	p.newMax <- max
 }
 
+func (p *Pool) SetTimeout(t time.Duration) {
+	p.newTimeout <- t
+}
+
 func (p *Pool) run() {
+	var max, created uint
+	var timeout time.Duration
+	remove := make(chan chan res)
+
 	for {
 		select {
-		case newMax := <-p.newMax:
-			p.max = newMax
+		case max = <-p.newMax:
+		case timeout = <-p.newTimeout:
+		case toRemove := <-remove:
+		search:
+			for w := range p.waiting {
+				if p.waiting[w] == toRemove {
+					ch := p.waiting[w]
+					p.waiting = append(p.waiting[:w], p.waiting[w:]...)
+					ch <- res{nil, Timeout}
+					break search
+				}
+			}
 		case getCh := <-p.get:
 			if len(p.is) > 0 {
 				//if pool values are waiting
@@ -80,29 +114,36 @@ func (p *Pool) run() {
 				v := p.is[last]
 				p.is = p.is[:last]
 
-				getCh <- v
+				getCh <- res{v, nil}
 				close(getCh)
-			} else if p.New != nil && (p.max == 0 || p.created < p.max) {
+				continue
+			} else if p.New != nil && (max == 0 || created < max) {
 				//Try to get a new one
 				if v, err := p.New(); err == nil {
-					p.created++
+					created++
 
 					//success
-					getCh <- v
+					getCh <- res{v, nil}
 					close(getCh)
-				} else {
-					//error = wait
-					p.waiting = append(p.waiting, getCh)
+					continue
 				}
-			} else {
+				//Error or New is nil
 				p.waiting = append(p.waiting, getCh)
+
+				if timeout > time.Duration(0) {
+					go func() {
+						time.Sleep(timeout)
+						remove <- getCh
+					}()
+				}
+
 			}
 		case v := <-p.put:
 			if len(p.waiting) > 0 {
 				getCh := p.waiting[0]
 				p.waiting = p.waiting[1:]
 
-				getCh <- v
+				getCh <- res{v, nil}
 				close(getCh)
 			} else {
 				p.is = append(p.is, v)

@@ -20,22 +20,30 @@ func TestPool(t *testing.T) {
 
 	p := NewPool(nf)
 
-	c := p.Get().(int)
+	c, err := p.Get()
 
-	if c != 1 {
+	if err != nil {
+		t.Errorf("Error getting item: %v", err)
+	}
+
+	if c.(int) != 1 {
 		t.Errorf("Value!=1")
 	}
 
 	p.Put(c)
-	c = p.Get().(int)
 
-	if c != 1 {
+	c, err = p.Get()
+	if err != nil {
+		t.Errorf("Error getting item: %v", err)
+	}
+
+	if c.(int) != 1 {
 		t.Errorf("Wrong value: %d, should be 1", c)
 	}
 
-	c = p.Get().(int)
+	c, _ = p.Get()
 
-	if c != 2 {
+	if c.(int) != 2 {
 		t.Errorf("Wrong value of c. %d, should be 2", c)
 	}
 
@@ -44,14 +52,14 @@ func TestPool(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		start := time.Now()
-		c = p.Get().(int)
+		c, _ = p.Get()
 		delta := time.Now().Sub(start)
 
 		if delta < delay {
 			t.Error("Got a value before the delay of %v", time.Second)
 		}
 
-		if c != 2 {
+		if c.(int) != 2 {
 			t.Errorf("Wrong value of c: %d, should be 2", c)
 		}
 		wg.Done()
@@ -61,4 +69,22 @@ func TestPool(t *testing.T) {
 	p.Put(c)
 
 	wg.Wait()
+
+	p.SetTimeout(time.Millisecond)
+
+	now := time.Now()
+
+	q, err := p.Get()
+
+	if time.Now().Sub(now) < time.Millisecond {
+		t.Errorf("Exited earlier than the timeout")
+	}
+
+	if q != nil {
+		t.Errorf("Should not have gotten anything.")
+	}
+
+	if err != Timeout {
+		t.Errorf("Did not send the \"Timeout\" error. %v", err)
+	}
 }
