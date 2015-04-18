@@ -57,6 +57,10 @@ type res struct {
 	item interface{}
 	err  error
 }
+type req struct {
+	req chan res
+	err error
+}
 
 //Get will return an interface from the pool, or attempt to create a new one if
 //it cannot get one. If the New() function is nil or returns an error, it will
@@ -89,7 +93,7 @@ func (p *Pool) SetTimeout(t time.Duration) {
 func (p *Pool) run() {
 	var max, created uint
 	var timeout time.Duration
-	remove := make(chan chan res)
+	remove := make(chan req)
 
 	for {
 		select {
@@ -98,20 +102,29 @@ func (p *Pool) run() {
 		case toRemove := <-remove:
 		search:
 			for w := range p.waiting {
-				if p.waiting[w] == toRemove {
+				if p.waiting[w] == toRemove.req {
 					ch := p.waiting[w]
 					p.waiting = append(p.waiting[:w], p.waiting[w:]...)
-					ch <- res{nil, Timeout}
+
+					if toRemove.err == nil {
+						ch <- res{nil, Timeout}
+					} else {
+						ch <- res{nil, toRemove.err}
+					}
+
 					break search
 				}
 			}
 		case getCh := <-p.get:
+			var err error
+			var v interface{}
+
 			if len(p.is) > 0 {
 				//if pool values are waiting
 				last := len(p.is) - 1
 
 				//Pop
-				v := p.is[last]
+				v = p.is[last]
 				p.is = p.is[:last]
 
 				getCh <- res{v, nil}
@@ -119,7 +132,8 @@ func (p *Pool) run() {
 				continue
 			} else if p.New != nil && (max == 0 || created < max) {
 				//Try to get a new one
-				if v, err := p.New(); err == nil {
+				v, err = p.New()
+				if err == nil {
 					created++
 
 					//success
@@ -127,16 +141,16 @@ func (p *Pool) run() {
 					close(getCh)
 					continue
 				}
-				//Error or New is nil
-				p.waiting = append(p.waiting, getCh)
+			}
 
-				if timeout > time.Duration(0) {
-					go func() {
-						time.Sleep(timeout)
-						remove <- getCh
-					}()
-				}
+			//Error or New is nil
+			p.waiting = append(p.waiting, getCh)
 
+			if timeout > time.Duration(0) {
+				go func() {
+					time.Sleep(timeout)
+					remove <- req{getCh, err}
+				}()
 			}
 		case v := <-p.put:
 			if len(p.waiting) > 0 {

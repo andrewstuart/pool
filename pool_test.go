@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestPool(t *testing.T) {
 			i++
 			return i, nil
 		} else {
-			return nil, LimitReached
+			return nil, fmt.Errorf("wat")
 		}
 	})
 
@@ -46,7 +47,11 @@ func TestPool(t *testing.T) {
 		t.Errorf("Wrong value: %d, should be 1", c)
 	}
 
-	c, _ = p.Get()
+	c, err = p.Get()
+
+	if err != nil {
+		t.Errorf("Error getting the second time: %v", err)
+	}
 
 	if c.(int) != 2 {
 		t.Errorf("Wrong value of c. %d, should be 2", c)
@@ -89,7 +94,7 @@ func TestPool(t *testing.T) {
 		t.Errorf("Should not have gotten anything.")
 	}
 
-	if err != Timeout {
-		t.Errorf("Did not send the \"Timeout\" error. %v", err)
+	if err == nil {
+		t.Errorf("Did not timeout with an error", err)
 	}
 }
