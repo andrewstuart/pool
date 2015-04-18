@@ -10,7 +10,7 @@ import (
 )
 
 type Pooler interface {
-	Get() interface{}
+	Get() (interface{}, error)
 	Put(interface{})
 }
 

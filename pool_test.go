@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+func testPool(Pooler) {
+}
+
 func TestPool(t *testing.T) {
 	i := 0
 
@@ -19,6 +22,8 @@ func TestPool(t *testing.T) {
 	})
 
 	p := NewPool(nf)
+
+	testPool(p)
 
 	c, err := p.Get()
 
